@@ -15,7 +15,7 @@ aassh - это простой инструмент командной строк
 Используйте следующую команду для установки aassh:
 
 ```bash
-sudo bash -c "$(curl -sL https://github.com/c0dwiz/aassh/raw/main/aassh.sh)" --install
+. <(wget -qO- https://github.com/c0dwiz/aassh/raw/main/aassh.sh) --install
 ```
 # Эта команда скачает скрипт установки и запустит его с правами суперпользователя.
 
