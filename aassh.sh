@@ -1,11 +1,17 @@
 #!/bin/bash
 
 APP_NAME="aassh"
-VERSION="1.0.1"
+VERSION="1.0.2"
 CONFIG_DIR="$HOME/.config/$APP_NAME"
 CONFIG_FILE="$CONFIG_DIR/config"
 BIN_DIR="/usr/local/bin"
 BIN_FILE="$BIN_DIR/$APP_NAME"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
 
 detect_distro() {
   if command -v apt-get &> /dev/null; then
@@ -24,9 +30,9 @@ detect_distro() {
 }
 
 print_help() {
-  echo "Использование: $APP_NAME [опции]"
+  echo -e "${BLUE}Использование: ${APP_NAME} [опции]${NC}"
   echo
-  echo "Опции:"
+  echo -e "${YELLOW}Опции:${NC}"
   echo "  --list            Вывести список сохраненных подключений"
   echo "  --connect <имя>   Подключиться к сохраненному подключению"
   echo "  --add             Добавить новое подключение (интерактивный режим)"
@@ -37,11 +43,11 @@ print_help() {
   echo "  --install         Установить программу"
   echo "  --uninstall       Удалить программу"
   echo
-  echo "Конфигурационный файл: $CONFIG_FILE"
+  echo -e "${YELLOW}Конфигурационный файл: ${NC}${CONFIG_FILE}"
 }
 
 print_version() {
-  echo "$APP_NAME v$VERSION"
+  echo -e "${GREEN}${APP_NAME} v${VERSION}${NC}"
 }
 
 create_config_dir() {
@@ -55,7 +61,7 @@ check_config_file() {
 
 check_name_exists() {
   local name="$1"
-  grep -q "^name=$name$" "$CONFIG_FILE"
+  grep -q "^name=${name}$" "$CONFIG_FILE"
 }
 
 add_connection() {
@@ -63,23 +69,23 @@ add_connection() {
 
   read -r -p "Введите имя подключения: " name
   if [ -z "$name" ]; then
-    echo "Имя подключения не может быть пустым."
+    echo -e "${RED}Имя подключения не может быть пустым.${NC}"
     return 1
   fi
   if check_name_exists "$name"; then
-    echo "Подключение с именем '$name' уже существует."
+    echo -e "${RED}Подключение с именем '$name' уже существует.${NC}"
     return 1
   fi
 
   read -r -p "Введите имя пользователя: " user
   if [ -z "$user" ]; then
-    echo "Имя пользователя не может быть пустым."
+    echo -e "${RED}Имя пользователя не может быть пустым.${NC}"
     return 1
   fi
 
   read -r -p "Введите IP адрес: " ip
   if [ -z "$ip" ]; then
-    echo "IP адрес не может быть пустым."
+    echo -e "${RED}IP адрес не может быть пустым.${NC}"
     return 1
   fi
 
@@ -88,40 +94,42 @@ add_connection() {
     port=22
   fi
   if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-    echo "Порт должен быть числом."
+    echo -e "${RED}Порт должен быть числом.${NC}"
     return 1
   fi
 
-  printf "name=%s\n" "$name" >> "$CONFIG_FILE"
-  printf "user=%s\n" "$user" >> "$CONFIG_FILE"
-  printf "ip=%s\n" "$ip" >> "$CONFIG_FILE"
-  printf "port=%s\n" "$port" >> "$CONFIG_FILE"
+  printf -v name_line "name=%s\n" "$name"
+  printf -v user_line "user=%s\n" "$user"
+  printf -v ip_line "ip=%s\n" "$ip"
+  printf -v port_line "port=%s\n" "$port"
 
-  echo "Подключение '$name' успешно добавлено."
+  echo "$name_line$user_line$ip_line$port_line" >> "$CONFIG_FILE"
 
-  echo "Используйте SSH ключи для безопасной аутентификации."
+  echo -e "${GREEN}Подключение '$name' успешно добавлено.${NC}"
+  echo -e "${YELLOW}Используйте SSH ключи для безопасной аутентификации.${NC}"
 
   return 0
 }
+
 
 edit_connection() {
   check_config_file
   local name="$1"
 
   if [ -z "$name" ]; then
-    echo "Укажите имя подключения для редактирования."
+    echo -e "${RED}Укажите имя подключения для редактирования.${NC}"
     return 1
   fi
   if ! check_name_exists "$name"; then
-    echo "Подключение с именем '$name' не найдено."
+    echo -e "${RED}Подключение с именем '$name' не найдено.${NC}"
     return 1
   fi
 
-  local user=$(grep "^user=" "$CONFIG_FILE" | grep "name=$name" | cut -d'=' -f2)
-  local ip=$(grep "^ip=" "$CONFIG_FILE" | grep "name=$name" | cut -d'=' -f2)
-  local port=$(grep "^port=" "$CONFIG_FILE" | grep "name=$name" | cut -d'=' -f2)
+  local user=$(grep "^name=$name" "$CONFIG_FILE" -A 3 | grep "^user=" | awk -F= '{print $2}')
+  local ip=$(grep "^name=$name" "$CONFIG_FILE" -A 3 | grep "^ip=" | awk -F= '{print $2}')
+  local port=$(grep "^name=$name" "$CONFIG_FILE" -A 3 | grep "^port=" | awk -F= '{print $2}')
 
-  echo "Редактирование подключения '$name':"
+  echo -e "${YELLOW}Редактирование подключения '$name':${NC}"
   read -r -p "Новое имя пользователя (текущее: $user): " new_user
   if [ -n "$new_user" ]; then
     user="$new_user"
@@ -136,47 +144,34 @@ edit_connection() {
   if [ -n "$new_port" ]; then
     port="$new_port"
     if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-      echo "Порт должен быть числом."
+      echo -e "${RED}Порт должен быть числом.${NC}"
       return 1
     fi
   fi
 
-  temp_file=$(mktemp)
-  trap "rm -f $temp_file" EXIT
+  printf -v name_line "name=%s\n" "$name"
+  printf -v user_line "user=%s\n" "$user"
+  printf -v ip_line "ip=%s\n" "$ip"
+  printf -v port_line "port=%s\n" "$port"
 
-  while IFS='=' read -r key value; do
-    if [[ "$key" == "name" && "$value" == "$name" ]]; then
-      continue
-    elif [[ "$key" == "user" && $(grep "name=$name" "$CONFIG_FILE") ]]; then
-        continue
-    elif [[ "$key" == "ip" && $(grep "name=$name" "$CONFIG_FILE") ]]; then
-        continue
-    elif [[ "$key" == "port" && $(grep "name=$name" "$CONFIG_FILE") ]]; then
-        continue
-    fi
-    printf "%s=%s\n" "$key" "$value" >> "$temp_file"
-  done < "$CONFIG_FILE"
+  sed -i "/^name=$name$/,+3d" "$CONFIG_FILE"
 
-  printf "name=%s\n" "$name" >> "$temp_file"
-  printf "user=%s\n" "$user" >> "$temp_file"
-  printf "ip=%s\n" "$ip" >> "$temp_file"
-  printf "port=%s\n" "$port" >> "$temp_file"
+  echo "$name_line$user_line$ip_line$port_line" >> "$CONFIG_FILE"
 
-  mv "$temp_file" "$CONFIG_FILE"
-
-  echo "Подключение '$name' успешно отредактировано."
+  echo -e "${GREEN}Подключение '$name' успешно отредактировано.${NC}"
 }
+
 
 delete_connection() {
   check_config_file
   local name="$1"
 
   if [ -z "$name" ]; then
-    echo "Укажите имя подключения для удаления."
+    echo -e "${RED}Укажите имя подключения для удаления.${NC}"
     return 1
   fi
   if ! check_name_exists "$name"; then
-    echo "Подключение с именем '$name' не найдено."
+    echo -e "${RED}Подключение с именем '$name' не найдено.${NC}"
     return 1
   fi
 
@@ -186,31 +181,17 @@ delete_connection() {
     return 0
   fi
 
-  temp_file=$(mktemp)
-  trap "rm -f $temp_file" EXIT
+  sed -i "/^name=$name$/,+3d" "$CONFIG_FILE"
 
-  while IFS='=' read -r key value; do
-    if [[ "$key" == "name" && "$value" == "$name" ]]; then
-      continue
-    elif [[ "$key" == "user" && $(grep "name=$name" "$CONFIG_FILE") ]]; then
-        continue
-    elif [[ "$key" == "ip" && $(grep "name=$name" "$CONFIG_FILE") ]]; then
-        continue
-    elif [[ "$key" == "port" && $(grep "name=$name" "$CONFIG_FILE") ]]; then
-        continue
-    fi
-    printf "%s=%s\n" "$key" "$value" >> "$temp_file"
-  done < "$CONFIG_FILE"
-
-  mv "$temp_file" "$CONFIG_FILE"
-
-  echo "Подключение '$name' успешно удалено."
+  echo -e "${GREEN}Подключение '$name' успешно удалено.${NC}"
 }
+
 
 list_connections() {
   check_config_file
 
   local count=0
+  echo -e "${YELLOW}Сохраненные подключения:${NC}"
   while IFS='=' read -r key value; do
     if [[ "$key" == "name" ]]; then
       echo "- $value"
@@ -219,7 +200,7 @@ list_connections() {
   done < "$CONFIG_FILE"
 
   if [ "$count" -eq 0 ]; then
-    echo "Нет сохраненных подключений."
+    echo -e "${YELLOW}Нет сохраненных подключений.${NC}"
   fi
 }
 
@@ -228,37 +209,36 @@ connect_to_server() {
   local name="$1"
 
   if [ -z "$name" ]; then
-    echo "Укажите имя подключения для подключения."
+    echo -e "${RED}Укажите имя подключения для подключения.${NC}"
     return 1
   fi
   if ! check_name_exists "$name"; then
-    echo "Подключение с именем '$name' не найдено."
+    echo -e "${RED}Подключение с именем '$name' не найдено.${NC}"
     return 1
   fi
 
-  local user=$(grep "^user=" "$CONFIG_FILE" | grep "name=$name" | cut -d'=' -f2)
-  local ip=$(grep "^ip=" "$CONFIG_FILE" | grep "name=$name" | cut -d'=' -f2)
-  local port=$(grep "^port=" "$CONFIG_FILE" | grep "name=$name" | cut -d
+  local user=$(grep "^name=$name" "$CONFIG_FILE" -A 3 | grep "^user=" | awk -F= '{print $2}')
+  local ip=$(grep "^name=$name" "$CONFIG_FILE" -A 3 | grep "^ip=" | awk -F= '{print $2}')
+  local port=$(grep "^name=$name" "$CONFIG_FILE" -A 3 | grep "^port=" | awk -F= '{print $2}')
 
-'=' -f2)
 
   if [ -z "$user" ] || [ -z "$ip" ] || [ -z "$port" ]; then
-    echo "Не удалось получить параметры подключения для '$name'."
+    echo -e "${RED}Не удалось получить параметры подключения для '$name'.${NC}"
     return 1
   fi
 
-  echo "Подключение к $user@$ip:$port..."
+  echo -e "${BLUE}Подключение к $user@$ip:$port...${NC}"
   ssh -p "$port" "$user@$ip"
 }
 
 install() {
   local distro=$(detect_distro)
 
-  if [ ! -d "$BIN_DIR" ]; then
+  if ! [ -d "$BIN_DIR" ]; then
     sudo mkdir -p "$BIN_DIR"
   fi
 
-  if [ ! -f "$BIN_FILE" ]; then
+  if ! [ -f "$BIN_FILE" ]; then
     sudo cp "$0" "$BIN_FILE"
     sudo chmod +x "$BIN_FILE"
 
@@ -266,9 +246,9 @@ install() {
       sudo update-alternatives --install "$BIN_DIR/$APP_NAME" "$APP_NAME" "$BIN_FILE" 10
     fi
 
-    echo "$APP_NAME успешно установлен в $BIN_DIR"
+    echo -e "${GREEN}${APP_NAME} успешно установлен в ${BIN_DIR}${NC}"
   else
-    echo "$APP_NAME уже установлен."
+    echo -e "${YELLOW}${APP_NAME} уже установлен.${NC}"
   fi
 }
 
@@ -281,9 +261,9 @@ uninstall() {
     fi
 
     sudo rm "$BIN_FILE"
-    echo "$APP_NAME успешно удален."
+    echo -e "${GREEN}${APP_NAME} успешно удален.${NC}"
   else
-    echo "$APP_NAME не установлен."
+    echo -e "${YELLOW}${APP_NAME} не установлен.${NC}"
   fi
 }
 
