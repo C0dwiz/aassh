@@ -1,7 +1,7 @@
 #!/bin/bash
 
 APP_NAME="aassh"
-VERSION="1.0.2"
+VERSION="1.0.5"
 CONFIG_DIR="$HOME/.config/$APP_NAME"
 CONFIG_FILE="$CONFIG_DIR/config"
 BIN_DIR="/usr/local/bin"
@@ -111,7 +111,6 @@ add_connection() {
   return 0
 }
 
-
 edit_connection() {
   check_config_file
   local name="$1"
@@ -161,7 +160,6 @@ edit_connection() {
   echo -e "${GREEN}Подключение '$name' успешно отредактировано.${NC}"
 }
 
-
 delete_connection() {
   check_config_file
   local name="$1"
@@ -185,7 +183,6 @@ delete_connection() {
 
   echo -e "${GREEN}Подключение '$name' успешно удалено.${NC}"
 }
-
 
 list_connections() {
   check_config_file
@@ -221,7 +218,6 @@ connect_to_server() {
   local ip=$(grep "^name=$name" "$CONFIG_FILE" -A 3 | grep "^ip=" | awk -F= '{print $2}')
   local port=$(grep "^name=$name" "$CONFIG_FILE" -A 3 | grep "^port=" | awk -F= '{print $2}')
 
-
   if [ -z "$user" ] || [ -z "$ip" ] || [ -z "$port" ]; then
     echo -e "${RED}Не удалось получить параметры подключения для '$name'.${NC}"
     return 1
@@ -231,40 +227,87 @@ connect_to_server() {
   ssh -p "$port" "$user@$ip"
 }
 
+get_privilege_command() {
+  if [[ $(id -u) -eq 0 ]]; then
+    echo ""
+  elif command -v sudo &> /dev/null; then
+    echo "sudo"
+  else
+    echo -e "${RED}Необходимы права суперпользователя (root). Установите 'sudo' или запустите скрипт от имени root.${NC}"
+    exit 1
+  fi
+}
+
+is_installed() {
+    if [ -f "$BIN_FILE" ]; then
+        return 0  # Installed
+    else
+        return 1  # Not installed
+    fi
+}
+
+
 install() {
   local distro=$(detect_distro)
+  local priv_cmd=$(get_privilege_command)
+
+  if is_installed; then
+      echo -e "${YELLOW}${APP_NAME} уже установлен.${NC}"
+      return 0
+  fi
 
   if ! [ -d "$BIN_DIR" ]; then
-    sudo mkdir -p "$BIN_DIR"
-  fi
-
-  if ! [ -f "$BIN_FILE" ]; then
-    sudo cp "$0" "$BIN_FILE"
-    sudo chmod +x "$BIN_FILE"
-
-    if [[ "$distro" == "debian" ]] && command -v update-alternatives &> /dev/null; then
-      sudo update-alternatives --install "$BIN_DIR/$APP_NAME" "$APP_NAME" "$BIN_FILE" 10
+    $priv_cmd mkdir -p "$BIN_DIR"
+    if [ $? -ne 0 ]; then
+      echo -e "${RED}Не удалось создать каталог ${BIN_DIR}.${NC}"
+      return 1
     fi
-
-    echo -e "${GREEN}${APP_NAME} успешно установлен в ${BIN_DIR}${NC}"
-  else
-    echo -e "${YELLOW}${APP_NAME} уже установлен.${NC}"
   fi
+
+  $priv_cmd cp "$0" "$BIN_FILE"
+  if [ $? -ne 0 ]; then
+    echo -e "${RED}Не удалось скопировать файл в ${BIN_FILE}.${NC}"
+    return 1
+  fi
+
+  $priv_cmd chmod +x "$BIN_FILE"
+  if [ $? -ne 0 ]; then
+    echo -e "${RED}Не удалось сделать файл исполняемым.${NC}"
+    return 1
+  fi
+
+
+  if [[ "$distro" == "debian" ]] && command -v update-alternatives &> /dev/null; then
+    $priv_cmd update-alternatives --install "$BIN_DIR/$APP_NAME" "$APP_NAME" "$BIN_FILE" 10
+  else
+    if ! grep -q "export PATH=\"\$PATH:$BIN_DIR\"" ~/.bashrc; then
+      echo "export PATH=\"\$PATH:$BIN_DIR\"" >> ~/.bashrc
+      echo -e "${YELLOW}Добавлен ${BIN_DIR} в PATH. Необходимо перезапустить терминал или выполнить 'source ~/.bashrc'${NC}"
+    fi
+  fi
+
+  echo -e "${GREEN}${APP_NAME} успешно установлен в ${BIN_DIR}${NC}"
 }
 
 uninstall() {
   local distro=$(detect_distro)
+  local priv_cmd=$(get_privilege_command)
 
-  if [ -f "$BIN_FILE" ]; then
-    if [[ "$distro" == "debian" ]] && command -v update-alternatives &> /dev/null; then
-      sudo update-alternatives --remove "$APP_NAME" "$BIN_FILE"
+    if ! is_installed; then
+        echo -e "${YELLOW}${APP_NAME} не установлен.${NC}"
+        return 0
     fi
 
-    sudo rm "$BIN_FILE"
-    echo -e "${GREEN}${APP_NAME} успешно удален.${NC}"
-  else
-    echo -e "${YELLOW}${APP_NAME} не установлен.${NC}"
+  if [[ "$distro" == "debian" ]] && command -v update-alternatives &> /dev/null; then
+    $priv_cmd update-alternatives --remove "$APP_NAME" "$BIN_FILE"
   fi
+
+  $priv_cmd rm "$BIN_FILE"
+  if [ $? -ne 0 ]; then
+      echo -e "${RED}Не удалось удалить файл ${BIN_FILE}.${NC}"
+      return 1
+  fi
+  echo -e "${GREEN}${APP_NAME} успешно удален.${NC}"
 }
 
 case "$1" in

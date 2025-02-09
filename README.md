@@ -16,8 +16,9 @@ aassh - это простой инструмент командной строк
 
 ```bash
 sudo bash -c "$(curl -sL https://github.com/c0dwiz/aassh/raw/main/aassh.sh)" --install
+# или 
+bash -c "$(curl -sL https://github.com/c0dwiz/aassh/raw/main/aassh.sh)" --install
 ```
-# Эта команда скачает скрипт установки и запустит его с правами суперпользователя.
 
 ## Использование
 
