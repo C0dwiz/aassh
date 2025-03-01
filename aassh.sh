@@ -248,45 +248,14 @@ is_installed() {
 
 
 install() {
-  local distro=$(detect_distro)
-  local priv_cmd=$(get_privilege_command)
-
-  if is_installed; then
-      echo -e "${YELLOW}${APP_NAME} уже установлен.${NC}"
-      return 0
-  fi
-
-  if ! [ -d "$BIN_DIR" ]; then
-    $priv_cmd mkdir -p "$BIN_DIR"
-    if [ $? -ne 0 ]; then
-      echo -e "${RED}Не удалось создать каталог ${BIN_DIR}.${NC}"
-      return 1
+    if [ -f "/usr/local/bin/aassh" ]; then
+        echo -e "${YELLOW}aassh уже установлен. Используйте скрипт install.sh для переустановки.${NC}"
+        return 1
     fi
-  fi
-
-  $priv_cmd cp "$0" "$BIN_FILE"
-  if [ $? -ne 0 ]; then
-    echo -e "${RED}Не удалось скопировать файл в ${BIN_FILE}.${NC}"
+    
+    echo -e "${YELLOW}Для установки используйте скрипт install.sh:${NC}"
+    echo -e "${BLUE}curl -sSL https://raw.githubusercontent.com/C0dwiz/aassh/main/install.sh | bash${NC}"
     return 1
-  fi
-
-  $priv_cmd chmod +x "$BIN_FILE"
-  if [ $? -ne 0 ]; then
-    echo -e "${RED}Не удалось сделать файл исполняемым.${NC}"
-    return 1
-  fi
-
-
-  if [[ "$distro" == "debian" ]] && command -v update-alternatives &> /dev/null; then
-    $priv_cmd update-alternatives --install "$BIN_DIR/$APP_NAME" "$APP_NAME" "$BIN_FILE" 10
-  else
-    if ! grep -q "export PATH=\"\$PATH:$BIN_DIR\"" ~/.bashrc; then
-      echo "export PATH=\"\$PATH:$BIN_DIR\"" >> ~/.bashrc
-      echo -e "${YELLOW}Добавлен ${BIN_DIR} в PATH. Необходимо перезапустить терминал или выполнить 'source ~/.bashrc'${NC}"
-    fi
-  fi
-
-  echo -e "${GREEN}${APP_NAME} успешно установлен в ${BIN_DIR}${NC}"
 }
 
 uninstall() {
