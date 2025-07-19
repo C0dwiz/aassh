@@ -11,7 +11,7 @@ TMP_DIR=$(mktemp -d)
 trap "rm -rf $TMP_DIR" EXIT
 
 echo "📥 Downloading aassh..."
-curl -sSL https://raw.githubusercontent.com/C0dWiz/aassh-py/main/aassh.py -o "$TMP_DIR/aassh.py"
+curl -sSL https://raw.githubusercontent.com/C0dWiz/aassh/main/aassh.py -o "$TMP_DIR/aassh.py"
 
 echo "🔧 Installing Python dependencies..."
 pip3 install --user pyyaml rich --break-system-packages
