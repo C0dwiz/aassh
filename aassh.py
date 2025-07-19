@@ -71,17 +71,21 @@ def load_config() -> Dict[str, SSHProfile]:
 
     profiles = {}
     for name, settings in config_data.get("profiles", {}).items():
-        profile = SSHProfile(
-            name=name,
-            host=settings.get("host", ""),
-            user=settings.get("user"),
-            port=settings.get("port"),
-            key=settings.get("key"),
-            description=settings.get("description"),
-            tags=settings.get("tags", []),
-        )
-        if profile.validate():
-            profiles[name] = profile
+        try:
+            profile = SSHProfile(
+                name=name,
+                host=settings.get("host", ""),
+                user=settings.get("user"),
+                port=settings.get("port"),
+                key=settings.get("key"),
+                description=settings.get("description"),
+                tags=settings.get("tags", []),
+            )
+            if profile.validate():
+                profiles[name] = profile
+        except Exception as e:
+            console.print(f"[bold red]Error creating profile '{name}': {e}[/bold red]")
+            sys.exit(1)
 
     return profiles
 
