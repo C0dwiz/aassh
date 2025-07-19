@@ -32,7 +32,7 @@ aassh is a lightweight command-line tool for managing SSH connections. It allows
 
 ```bash
 # Download and run the installer
-curl -sSL https://raw.githubusercontent.com/yourusername/aassh-py/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/C0dWiz/aassh/main/install.sh | bash
 
 # Update PATH (if needed)
 export PATH="$PATH:${HOME}/.local/bin"
