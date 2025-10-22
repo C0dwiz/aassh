@@ -4,19 +4,19 @@ AASSH - Another Awesome SSH Client (Python Edition)
 Interactive SSH client with rich terminal interface
 """
 
-import os
-import sys
 import argparse
+import os
 import subprocess
-import yaml
-
-from pathlib import Path
+import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, NoReturn
+from pathlib import Path
+from typing import Dict, List, NoReturn, Optional
+
+import yaml
 from rich.console import Console
+from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
-from rich.panel import Panel
 
 CONFIG_DIR = Path.home() / ".aassh"
 CONFIG_FILE = CONFIG_DIR / "config.yml"
