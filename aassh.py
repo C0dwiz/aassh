@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, NoReturn, Optional
 
