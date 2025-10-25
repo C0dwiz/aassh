@@ -2,8 +2,6 @@
 
 <div align="center">
 
-![aassh Logo](https://raw.githubusercontent.com/C0dwiz/aassh/dev/docs/assets/logo.png)
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-1.0.5-blue.svg)](https://github.com/C0dwiz/aassh/releases)
 [![Shell Script](https://img.shields.io/badge/language-Shell-green.svg)](https://www.gnu.org/software/bash/)
