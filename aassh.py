@@ -12,13 +12,14 @@ import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, NoReturn, Optional
+from typing import Any, Dict, List, NoReturn, Optional
 
 import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
+from rich.text import Text
 
 CONFIG_DIR = Path.home() / ".aassh"
 CONFIG_FILE = CONFIG_DIR / "config.yml"
@@ -37,9 +38,9 @@ class SSHProfile:
     port: Optional[int] = None
     key: Optional[str] = None
     description: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)  # type: ignore
     use_mosh: bool = False
-    mosh_args: List[str] = field(default_factory=list)
+    mosh_args: List[str] = field(default_factory=list)  # type: ignore
     mosh_port_range: Optional[str] = None
 
     def connection_string(self) -> str:
@@ -47,7 +48,7 @@ class SSHProfile:
         user_part = f"{self.user}@" if self.user else ""
         return f"{user_part}{self.host}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert profile to a dictionary for YAML serialization."""
         data = asdict(self)
         del data["name"]
@@ -58,15 +59,46 @@ class SSHProfile:
         if not self.host:
             console.print(f"[red]Error: Host missing for profile '{self.name}'[/red]")
             return False
+
         if self.port and not (0 < self.port <= 65535):
             console.print(
                 f"[red]Error: Invalid port number for profile '{self.name}'[/red]"
             )
             return False
-        if self.key and not Path(os.path.expanduser(self.key)).exists():
+
+        if self.key:
+            expanded_key = Path(os.path.expanduser(self.key))
+            if not expanded_key.exists():
+                console.print(
+                    f"[red]Error: SSH key not found for profile '{self.name}': {expanded_key}[/red]"
+                )
+                return False
+
+        # Validate Mosh port range format
+        if self.mosh_port_range and not self._validate_mosh_port_range():
+            return False
+
+        return True
+
+    def _validate_mosh_port_range(self) -> bool:
+        """Validate Mosh port range format"""
+        if not self.mosh_port_range:
+            return True
+
+        try:
+            if ":" in self.mosh_port_range:
+                start, end = map(int, self.mosh_port_range.split(":"))
+                if not (0 < start <= 65535 and 0 < end <= 65535 and start < end):
+                    raise ValueError("Invalid port range")
+            else:
+                port = int(self.mosh_port_range)
+                if not (0 < port <= 65535):
+                    raise ValueError("Invalid port")
+        except (ValueError, AttributeError):
             console.print(
-                f"[red]Error: SSH key not found for profile '{self.name}'[/red]"
+                f"[red]Error: Invalid Mosh port range for profile '{self.name}': {self.mosh_port_range}[/red]"
             )
+            console.print("[yellow]Use format: 60000:61000 or single port[/yellow]")
             return False
         return True
 
@@ -77,9 +109,9 @@ def error_exit(message: str, code: int = 1) -> NoReturn:
     sys.exit(code)
 
 
-def save_config(profiles: Dict[str, SSHProfile]):
+def save_config(profiles: Dict[str, SSHProfile]) -> None:
     """Save profiles to the configuration file."""
-    config_data = {
+    config_data: Dict[str, Any] = {
         "profiles": {
             name: profile.to_dict() for name, profile in sorted(profiles.items())
         }
@@ -101,13 +133,13 @@ def load_config() -> Dict[str, SSHProfile]:
 
     try:
         with open(CONFIG_FILE, "r") as f:
-            config_data = yaml.safe_load(f) or {}
+            config_data: Dict[str, Any] = yaml.safe_load(f) or {}
     except yaml.YAMLError as e:
         error_exit(f"Error parsing YAML config: {e}")
     except Exception as e:
         error_exit(f"Error reading config file: {e}")
 
-    profiles = {}
+    profiles: Dict[str, SSHProfile] = {}
     for name, settings in config_data.get("profiles", {}).items():
         try:
             profile = SSHProfile(name=name, **settings)
@@ -121,9 +153,10 @@ def load_config() -> Dict[str, SSHProfile]:
     return profiles
 
 
-def display_profile_table(profiles: Dict[str, SSHProfile]):
+def display_profile_table(profiles: Dict[str, SSHProfile]) -> None:
     """Display profiles in a rich table"""
     if not profiles:
+        console.print("[yellow]No profiles found.[/yellow]")
         return
 
     table = Table(
@@ -145,7 +178,11 @@ def display_profile_table(profiles: Dict[str, SSHProfile]):
 
         tags = ", ".join(profile.tags) if profile.tags else "-"
         desc = profile.description or "No description"
-        connection_type = "🛜 Mosh" if profile.use_mosh else "🔗 SSH"
+        connection_type = (
+            Text("🛜 Mosh", style="bold blue")
+            if profile.use_mosh
+            else Text("🔗 SSH", style="bold green")
+        )
 
         table.add_row(f"[bold]{name}[/bold]", connection_type, conn_str, desc, tags)
 
@@ -162,13 +199,15 @@ def connection_runner(client_name: str, not_found_msg: str):
         console.print(
             f"[bold red]{client_name} connection failed (code {e.returncode})[/bold red]"
         )
+        sys.exit(e.returncode)
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Connection terminated by user[/bold yellow]")
+        sys.exit(130)
     except FileNotFoundError:
         error_exit(not_found_msg)
 
 
-def run_connection(profile: SSHProfile):
+def run_connection(profile: SSHProfile) -> None:
     """Execute SSH or Mosh connection"""
     if profile.use_mosh:
         run_mosh(profile)
@@ -176,7 +215,7 @@ def run_connection(profile: SSHProfile):
         run_ssh(profile)
 
 
-def run_ssh(profile: SSHProfile):
+def run_ssh(profile: SSHProfile) -> None:
     """Execute SSH connection"""
     cmd = ["ssh", "-o", "StrictHostKeyChecking=yes"]
     if profile.port:
@@ -188,7 +227,9 @@ def run_ssh(profile: SSHProfile):
     console.print(
         f"\n🚀 [bold green]Connecting via SSH to [cyan]{profile.name}[/cyan]...[/bold green]"
     )
-    console.print(f"🔗 [yellow]{' '.join(cmd)}[/yellow]\n")
+    console.print(
+        f"🔗 [yellow]{' '.join(shlex.quote(str(arg)) for arg in cmd)}[/yellow]\n"
+    )
 
     with connection_runner(
         "SSH", "SSH client not found! Please ensure OpenSSH is installed."
@@ -196,7 +237,7 @@ def run_ssh(profile: SSHProfile):
         subprocess.run(cmd, check=True)
 
 
-def run_mosh(profile: SSHProfile):
+def run_mosh(profile: SSHProfile) -> None:
     """Execute Mosh connection"""
     cmd = ["mosh"]
     ssh_cmd_list = ["ssh"]
@@ -220,7 +261,9 @@ def run_mosh(profile: SSHProfile):
     console.print(
         f"\n🛜 [bold green]Connecting via Mosh to [cyan]{profile.name}[/cyan]...[/bold green]"
     )
-    console.print(f"📡 [yellow]{' '.join(cmd)}[/yellow]")
+    console.print(
+        f"📡 [yellow]{' '.join(shlex.quote(str(arg)) for arg in cmd)}[/yellow]"
+    )
     console.print(
         "[dim]Mosh provides better connectivity for unstable networks[/dim]\n"
     )
@@ -236,7 +279,7 @@ def run_mosh(profile: SSHProfile):
 
 def interactive_select(
     profiles: Dict[str, SSHProfile], filter_str: Optional[str] = None
-):
+) -> None:
     """Interactive profile selection with rich interface"""
     if not profiles:
         error_exit("No profiles found. Use 'aassh --add' to create one.")
@@ -257,6 +300,17 @@ def interactive_select(
 
     display_profile_table(profiles_to_display)
     choices = list(sorted(profiles_to_display.keys()))
+
+    if len(choices) == 1:
+        # Auto-select if only one profile matches
+        choice = choices[0]
+        console.print(
+            f"[green]Auto-selecting the only matching profile: {choice}[/green]"
+        )
+        if Confirm.ask("Connect to this profile?", default=True):
+            run_connection(profiles_to_display[choice])
+        return
+
     try:
         choice = Prompt.ask("🔍 Select profile", choices=choices, show_choices=False)
         if choice in profiles_to_display:
@@ -284,22 +338,25 @@ def filter_profiles(
     }
 
 
-def add_profile(profiles: Dict[str, SSHProfile]):
-    """Interactively add a new profile."""
-    console.print(Panel("[bold green]Add New SSH Profile[/bold green]", expand=False))
-    name = Prompt.ask("Profile Name")
+def get_profile_input(existing_profile: Optional[SSHProfile] = None) -> Dict[str, Any]:
+    """Get profile input from user, with existing values as defaults."""
+    defaults: Dict[str, Any] = existing_profile.__dict__ if existing_profile else {}
+
+    name: str = Prompt.ask("Profile Name", default=defaults.get("name", ""))
     if not name:
         error_exit("Profile name cannot be empty.")
-    if name in profiles:
-        error_exit(f"Profile '{name}' already exists.")
 
-    host = Prompt.ask("Host")
+    host: str = Prompt.ask("Host", default=defaults.get("host", ""))
     if not host:
         error_exit("Host cannot be empty.")
 
-    user = Prompt.ask("User (optional)") or None
+    user: Optional[str] = (
+        Prompt.ask("User (optional)", default=defaults.get("user") or "") or None
+    )
 
-    port_str = Prompt.ask("Port (optional, default: 22)")
+    port_str: str = Prompt.ask(
+        "Port (optional, default: 22)", default=str(defaults.get("port") or "")
+    )
     port: Optional[int] = None
     if port_str:
         try:
@@ -307,34 +364,66 @@ def add_profile(profiles: Dict[str, SSHProfile]):
         except ValueError:
             error_exit(f"Invalid port number: '{port_str}'. Port must be an integer.")
 
-    key = Prompt.ask("SSH Key Path (optional, e.g., ~/.ssh/id_rsa)") or None
-    description = Prompt.ask("Description (optional)") or None
-    tags_str = Prompt.ask("Tags (optional, comma-separated)")
-    tags = [tag.strip() for tag in tags_str.split(",")] if tags_str else []
+    key: Optional[str] = (
+        Prompt.ask(
+            "SSH Key Path (optional, e.g., ~/.ssh/id_rsa)",
+            default=defaults.get("key") or "",
+        )
+        or None
+    )
+    description: Optional[str] = (
+        Prompt.ask("Description (optional)", default=defaults.get("description") or "")
+        or None
+    )
 
-    use_mosh = False
+    default_tags: str = ", ".join(defaults.get("tags", []))
+    tags_str: str = Prompt.ask("Tags (optional, comma-separated)", default=default_tags)
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",")] if tags_str else []
+
+    use_mosh: bool = Confirm.ask("Use Mosh?", default=defaults.get("use_mosh", False))
+
     mosh_args: List[str] = []
     mosh_port_range: Optional[str] = None
+    if use_mosh:
+        default_mosh_args: str = " ".join(defaults.get("mosh_args", []))
+        mosh_args_str: str = Prompt.ask(
+            "Mosh args (optional, space-separated)", default=default_mosh_args
+        )
+        mosh_args = mosh_args_str.split() if mosh_args_str else []
 
-    if Confirm.ask("Use Mosh?", default=False):
-        use_mosh = True
-        mosh_args = Prompt.ask("Mosh args (optional, space-separated)").split()
         mosh_port_range = (
-            Prompt.ask("Mosh UDP port range (optional, e.g., 60000:61000)") or None
+            Prompt.ask(
+                "Mosh UDP port range (optional, e.g., 60000:61000)",
+                default=defaults.get("mosh_port_range") or "",
+            )
+            or None
         )
 
-    new_profile = SSHProfile(
-        name=name,
-        host=host,
-        user=user,
-        port=port,
-        key=key,
-        description=description,
-        tags=tags,
-        use_mosh=use_mosh,
-        mosh_args=mosh_args,
-        mosh_port_range=mosh_port_range,
-    )
+    return {
+        "name": name,
+        "host": host,
+        "user": user,
+        "port": port,
+        "key": key,
+        "description": description,
+        "tags": tags,
+        "use_mosh": use_mosh,
+        "mosh_args": mosh_args,
+        "mosh_port_range": mosh_port_range,
+    }
+
+
+def add_profile(profiles: Dict[str, SSHProfile]) -> None:
+    """Interactively add a new profile."""
+    console.print(Panel("[bold green]Add New SSH Profile[/bold green]", expand=False))
+
+    input_data: Dict[str, Any] = get_profile_input()
+    name: str = input_data["name"]
+
+    if name in profiles:
+        error_exit(f"Profile '{name}' already exists.")
+
+    new_profile = SSHProfile(**input_data)
 
     if not new_profile.validate():
         error_exit("Profile validation failed. Aborting.")
@@ -344,52 +433,28 @@ def add_profile(profiles: Dict[str, SSHProfile]):
     console.print(f"[bold green]✓ Profile '{name}' added successfully.[/bold green]")
 
 
-def edit_profile(profiles: Dict[str, SSHProfile], name: str):
+def edit_profile(profiles: Dict[str, SSHProfile], name: str) -> None:
     """Interactively edit an existing profile."""
     if name not in profiles:
         error_exit(f"Profile '{name}' not found.")
 
     console.print(Panel(f"[bold green]Edit Profile: {name}[/bold green]", expand=False))
-    p = profiles[name]
 
-    host = Prompt.ask("Host", default=p.host)
-    if not host:
-        error_exit("Host cannot be empty.")
-    p.host = host
+    input_data: Dict[str, Any] = get_profile_input(profiles[name])
+    # Keep the original name for the profile
+    input_data["name"] = name
 
-    p.user = Prompt.ask("User", default=p.user or "") or None
+    updated_profile = SSHProfile(**input_data)
 
-    port_str = Prompt.ask("Port", default=str(p.port or ""))
-    port = None
-    if port_str:
-        try:
-            port = int(port_str)
-        except ValueError:
-            error_exit(f"Invalid port number: '{port_str}'. Port must be an integer.")
-    p.port = port
-
-    p.key = Prompt.ask("SSH Key Path", default=p.key or "") or None
-    p.description = Prompt.ask("Description", default=p.description or "") or None
-    tags_str = Prompt.ask("Tags", default=", ".join(p.tags))
-    p.tags = [tag.strip() for tag in tags_str.split(",")] if tags_str else []
-
-    p.use_mosh = Confirm.ask("Use Mosh?", default=p.use_mosh)
-    if p.use_mosh:
-        p.mosh_args = Prompt.ask("Mosh args", default=" ".join(p.mosh_args)).split()
-        p.mosh_port_range = (
-            Prompt.ask("Mosh UDP port range", default=p.mosh_port_range or "") or None
-        )
-    else:
-        p.mosh_args, p.mosh_port_range = [], None
-
-    if not p.validate():
+    if not updated_profile.validate():
         error_exit("Profile validation failed. Aborting.")
 
+    profiles[name] = updated_profile
     save_config(profiles)
     console.print(f"[bold green]✓ Profile '{name}' updated successfully.[/bold green]")
 
 
-def delete_profile(profiles: Dict[str, SSHProfile], name: str):
+def delete_profile(profiles: Dict[str, SSHProfile], name: str) -> None:
     """Delete a profile."""
     if name not in profiles:
         error_exit(f"Profile '{name}' not found.")
@@ -402,19 +467,20 @@ def delete_profile(profiles: Dict[str, SSHProfile], name: str):
         console.print("[yellow]Deletion cancelled.[/yellow]")
 
 
-def show_version():
+def show_version() -> None:
     """Display version information"""
     console.print(
         Panel(
-            f"[bold green]AASSH v{VERSION}[/bold green]\n"
-            "📖 GitHub: [underline blue]https://github.com/C0dWiz/aassh[/underline blue]",
+            f"[bold green]AASSH v{VERSION}[/bold green]\n\n"
+            "📖 GitHub: [underline blue]https://github.com/C0dWiz/aassh[/underline blue]\n"
+            "🐛 Report Issues: [underline blue]https://github.com/C0dWiz/aassh/issues[/underline blue]",
             title="Version Information",
             border_style="green",
         )
     )
 
 
-def create_sample_config():
+def create_sample_config() -> None:
     """Create sample configuration file"""
     if CONFIG_FILE.exists():
         if not Confirm.ask(
@@ -448,9 +514,11 @@ profiles:
     host: mobile.example.com
     user: mobile_user
     use_mosh: true
+    mosh_port_range: 60000:61000
     description: Server with Mosh for unstable connections
     tags:
       - mosh
+      - mobile
 """
     try:
         CONFIG_DIR.mkdir(exist_ok=True, parents=True)
@@ -468,18 +536,27 @@ profiles:
         error_exit(f"Error creating sample config: {e}")
 
 
-def check_mosh_installed():
+def check_mosh_installed() -> bool:
     """Check if Mosh is installed"""
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["mosh", "--version"], capture_output=True, check=True, text=True
         )
+        version_line = (
+            result.stdout.split("\n")[0] if result.stdout else "Unknown version"
+        )
+        console.print(f"[bold green]✓ Mosh is installed: {version_line}[/bold green]")
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
+        console.print("[bold red]✗ Mosh is not installed or not in PATH[/bold red]")
+        console.print("\n[yellow]Installation instructions:[/yellow]")
+        console.print("  Ubuntu/Debian: [cyan]sudo apt install mosh[/cyan]")
+        console.print("  macOS: [cyan]brew install mosh[/cyan]")
+        console.print("  CentOS/RHEL: [cyan]sudo yum install mosh[/cyan]")
         return False
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="AASSH - Another Awesome SSH Client with Mosh support",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -522,10 +599,7 @@ def main():
         return
 
     if args.check_mosh:
-        if check_mosh_installed():
-            console.print("[bold green]✓ Mosh is installed and available[/bold green]")
-        else:
-            console.print("[bold red]✗ Mosh is not installed or not in PATH[/bold red]")
+        check_mosh_installed()
         return
 
     if args.create_sample_config:
@@ -557,13 +631,14 @@ def main():
         )
         return
 
-    if any(p.use_mosh for p in profiles.values()) and not check_mosh_installed():
+    mosh_profiles = [p for p in profiles.values() if p.use_mosh]
+    if mosh_profiles and not check_mosh_installed():
         console.print(
-            "[yellow]Warning: Some profiles require Mosh but it's not installed.[/yellow]"
+            f"\n[yellow]Warning: {len(mosh_profiles)} profile(s) require Mosh but it's not installed.[/yellow]"
         )
 
     if args.list:
-        profiles_to_display = filter_profiles(profiles, args.filter)
+        profiles_to_display = filter_profiles(profiles, args.filter or "")
         display_profile_table(profiles_to_display)
         return
 

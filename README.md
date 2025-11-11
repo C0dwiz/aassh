@@ -3,24 +3,28 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.0.5-blue.svg)](https://github.com/C0dwiz/aassh/releases)
-[![Shell Script](https://img.shields.io/badge/language-Shell-green.svg)](https://www.gnu.org/software/bash/)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/C0dWiz/aassh/releases)
+[![Python](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/C0dWiz/aassh)
 
-*Simple and convenient SSH connection manager for Linux*
+
+*Simple and convenient SSH connection manager with Mosh support*
 
 </div>
 
 ## 📋 Description
 
-aassh is a lightweight command-line tool for managing SSH connections. It allows you to save, organize, and quickly connect to your SSH servers using convenient aliases instead of memorizing IP addresses and parameters.
+aassh is a lightweight command-line tool for managing SSH connections. It allows you to save, organize, and quickly connect to your SSH servers using convenient aliases instead of memorizing IP addresses and parameters. Includes full Mosh support for better mobile connectivity.
 
 ## ✨ Features
 
-- 🔐 Security: Designed to work with SSH keys
-- 📝 Simple Management: Intuitive command-line interface
-- 🚀 Fast Connection: Instant access to servers by name
-- 🔄 Flexible Configuration: Easy editing of connection parameters
-- 📦 Easy Installation: Single script for installation and setup
+- 🔐 **Security**: Designed to work with SSH keys
+- 📝 **Simple Management**: Intuitive command-line interface
+- 🚀 **Fast Connection**: Instant access to servers by name
+- 🔄 **Flexible Configuration**: Easy editing of connection parameters
+- 📦 **Easy Installation**: Single script for installation and setup
+- 🛜 **Mosh Support**: Better connectivity for unstable networks
+- 🎨 **Rich Interface**: Beautiful terminal UI with colors and tables
 
 ## 🚀 Installation
 
@@ -41,14 +45,26 @@ export PATH="$PATH:${HOME}/.local/bin"
 # Interactive mode (beautiful interface)
 aassh
 
-# List profiles
+# List all profiles
 aassh -l
 
-# Connect to a specific profile
+# Filter profiles
+aassh -f production
+
+# Connect to specific profile
 aassh aws-prod
 
-# Create sample config
-aassh --create-sample-config
+# Add new profile
+aassh --add
+
+# Edit existing profile
+aassh --edit home-server
+
+# Delete profile
+aassh --delete office-jumpbox
+
+# Check Mosh installation
+aassh --check-mosh
 
 # Show version
 aassh -v
@@ -79,6 +95,14 @@ profiles:
     key: ~/.ssh/company_key
     description: Corporate jump server
     tags: [work, vpn]
+
+  mobile-server:
+    host: mobile.example.com
+    user: mobile_user
+    use_mosh: true
+    mosh_port_range: 60000:61000
+    description: Server with Mosh for mobile connections
+    tags: [mosh, mobile]
 ```
 
 ## 🤝 Contributing
