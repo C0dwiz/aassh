@@ -7,7 +7,7 @@ set -euo pipefail
 
 INSTALL_DIR="${HOME}/.local/bin"
 SCRIPT_NAME="aassh"
-SOURCE_URL="https://raw.githubusercontent.com/C0dWiz/aassh/main/aassh.py"
+SOURCE_URL="https://raw.githubusercontent.com/C0dwiz/aassh/refs/heads/dev/aassh.py"
 PYTHON_DEPS="pyyaml rich"
 MIN_PYTHON_VERSION="3.7"
 
@@ -66,15 +66,15 @@ install_python_deps() {
     info "Installing Python dependencies ($PYTHON_DEPS)..."
     
     # Try different installation methods
-    if pip3 install --user $PYTHON_DEPS; then
+    if pip3 install --user $PYTHON_DEPS --break-system-packages; then
         success "Dependencies installed successfully"
     else
         warn "Standard pip install failed. Trying with --break-system-packages..."
-        if pip3 install --user --break-system-packages $PYTHON_DEPS; then
+        if pip3 install $PYTHON_DEPS --break-system-packages; then
             success "Dependencies installed with --break-system-packages"
         else
             warn "Failed to install with --break-system-packages. Trying system-wide install..."
-            if pip3 install $PYTHON_DEPS; then
+            if pip3 install $PYTHON_DEPS --break-system-packages; then
                 success "Dependencies installed system-wide"
             else
                 error "Failed to install Python dependencies. Please install manually: pip3 install $PYTHON_DEPS"
