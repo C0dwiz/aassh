@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aassh"
+version = "1.2.0"
+description = "Another Awesome SSH Client with Mosh support"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+  { name = "C0dWiz" }
+]
+dependencies = [
+  "PyYAML>=6.0",
+  "rich>=13.0",
+  "ruamel.yaml>=0.18.0"
+]
+
+[project.optional-dependencies]
+completion = ["argcomplete>=3.1"]
+
+[project.scripts]
+aassh = "aassh:main"
+
+[tool.setuptools]
+py-modules = ["aassh"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["test_*.py"]
+addopts = "-q"

@@ -10,6 +10,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 
 from aassh import (
+    ConfigError,
     SSHProfile,
     check_mosh_installed,
     create_sample_config,
@@ -76,6 +77,13 @@ class TestSSHProfile:
         assert result["user"] == "user"
         assert result["port"] == 22
         assert result["tags"] == ["test"]
+
+    def test_to_dict_keeps_boolean_false_when_explicit(self) -> None:
+        """Тест, что use_mosh=False явно сериализуется"""
+        profile = SSHProfile(name="test", host="host.com", use_mosh=False)
+        result = profile.to_dict()
+        assert "use_mosh" in result
+        assert result["use_mosh"] is False
 
     def test_validation_valid_profile(self) -> None:
         """Тест валидации корректного профиля"""
@@ -162,7 +170,7 @@ class TestConfigFunctions:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text(invalid_yaml)
 
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigError):
             load_config()
 
     def test_create_sample_config(self) -> None:

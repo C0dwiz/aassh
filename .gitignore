@@ -1,2 +1,14 @@
 __pycache__
 .pytest_cache
+.venv
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+.DS_Store
+.idea
+.vscode
+*.egg-info
+dist

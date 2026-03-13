@@ -3,8 +3,8 @@
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/C0dWiz/aassh/releases)
-[![Python](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/C0dWiz/aassh/releases)
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/C0dWiz/aassh)
 
 
@@ -30,17 +30,31 @@ aassh is a lightweight command-line tool for managing SSH connections. It allows
 
 ### Installation and Usage Instructions
 
-1. Installation via script:
+1. Installation via script (safe flow):
 
 ```bash
-# Download and run the installer
-curl -sSL https://raw.githubusercontent.com/C0dWiz/aassh/dev/install.sh | bash
+# Download installer
+curl -fsSL -o install.sh https://raw.githubusercontent.com/C0dWiz/aassh/dev/install.sh
+
+# (Optional) inspect before running
+less install.sh
+
+# Run installer
+bash install.sh
 
 # Update PATH (if needed)
 export PATH="$PATH:${HOME}/.local/bin"
 ```
 
-2. **Usage:**
+2. Installation from source (pip):
+
+```bash
+git clone https://github.com/C0dWiz/aassh.git
+cd aassh
+python3 -m pip install .
+```
+
+3. **Usage:**
 ```bash
 # Interactive mode (beautiful interface)
 aassh
@@ -66,8 +80,23 @@ aassh --delete office-jumpbox
 # Check Mosh installation
 aassh --check-mosh
 
+# Export profiles
+aassh --export ./backup.yml
+
+# Import profiles
+aassh --import ./backup.yml
+
+# Import hosts from OpenSSH config
+aassh --import-ssh-config
+
 # Show version
 aassh -v
+```
+
+4. Uninstall:
+
+```bash
+bash install.sh --uninstall
 ```
 
 ## ⚙️ Configuration

@@ -6,15 +6,17 @@ Interactive SSH client with rich terminal interface with Mosh support
 
 import argparse
 import os
+import re
 import shlex
 import subprocess
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn, Optional
+from typing import Any, Dict, Iterator, List, NoReturn, Optional
 
 import yaml
+from ruamel.yaml import YAML
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -23,9 +25,32 @@ from rich.text import Text
 
 CONFIG_DIR = Path.home() / ".aassh"
 CONFIG_FILE = CONFIG_DIR / "config.yml"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
+MAX_CONFIG_SIZE_BYTES = 1024 * 1024
 
 console = Console()
+ruamel_yaml = YAML()
+ruamel_yaml.default_flow_style = False
+
+
+class AasshError(Exception):
+    """Base application error."""
+
+
+class AasshExitError(AasshError):
+    """Error that carries desired process exit code."""
+
+    def __init__(self, message: str, code: int = 1):
+        super().__init__(message)
+        self.code = code
+
+
+class ConfigError(AasshError):
+    """Configuration read/write/parsing error."""
+
+
+class ConnectionErrorWithCode(AasshExitError):
+    """Connection-related error with process exit code."""
 
 
 @dataclass
@@ -48,11 +73,20 @@ class SSHProfile:
         user_part = f"{self.user}@" if self.user else ""
         return f"{user_part}{self.host}"
 
+    def ssh_args(self) -> List[str]:
+        """Build common SSH argument list."""
+        args: List[str] = []
+        if self.port:
+            args.extend(["-p", str(self.port)])
+        if self.key:
+            args.extend(["-i", os.path.expanduser(self.key)])
+        return args
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert profile to a dictionary for YAML serialization."""
         data = asdict(self)
         del data["name"]
-        return {k: v for k, v in data.items() if v not in [None, [], False]}
+        return {k: v for k, v in data.items() if v not in [None, []]}
 
     def validate(self) -> bool:
         """Validate profile configuration"""
@@ -111,19 +145,27 @@ def error_exit(message: str, code: int = 1) -> NoReturn:
 
 def save_config(profiles: Dict[str, SSHProfile]) -> None:
     """Save profiles to the configuration file."""
-    config_data: Dict[str, Any] = {
-        "profiles": {
-            name: profile.to_dict() for name, profile in sorted(profiles.items())
-        }
+    sorted_profiles = {
+        name: profile.to_dict() for name, profile in sorted(profiles.items())
     }
     try:
         CONFIG_DIR.mkdir(exist_ok=True, parents=True)
-        with open(CONFIG_FILE, "w") as f:
-            yaml.dump(
-                config_data, f, sort_keys=False, default_flow_style=False, indent=2
-            )
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, "r") as f:
+                existing_data = ruamel_yaml.load(f) or {}
+            if not isinstance(existing_data, dict):
+                existing_data = {}
+            existing_data["profiles"] = sorted_profiles
+            with open(CONFIG_FILE, "w") as f:
+                ruamel_yaml.dump(existing_data, f)
+        else:
+            config_data: Dict[str, Any] = {"profiles": sorted_profiles}
+            with open(CONFIG_FILE, "w") as f:
+                yaml.dump(
+                    config_data, f, sort_keys=False, default_flow_style=False, indent=2
+                )
     except Exception as e:
-        error_exit(f"Error saving config file: {e}")
+        raise ConfigError(f"Error saving config file: {e}") from e
 
 
 def load_config() -> Dict[str, SSHProfile]:
@@ -131,13 +173,19 @@ def load_config() -> Dict[str, SSHProfile]:
     if not CONFIG_FILE.exists():
         return {}
 
+    if CONFIG_FILE.stat().st_size > MAX_CONFIG_SIZE_BYTES:
+        raise ConfigError(
+            f"Config file is too large ({CONFIG_FILE.stat().st_size} bytes). "
+            f"Max supported size: {MAX_CONFIG_SIZE_BYTES} bytes"
+        )
+
     try:
         with open(CONFIG_FILE, "r") as f:
             config_data: Dict[str, Any] = yaml.safe_load(f) or {}
     except yaml.YAMLError as e:
-        error_exit(f"Error parsing YAML config: {e}")
+        raise ConfigError(f"Error parsing YAML config: {e}") from e
     except Exception as e:
-        error_exit(f"Error reading config file: {e}")
+        raise ConfigError(f"Error reading config file: {e}") from e
 
     profiles: Dict[str, SSHProfile] = {}
     for name, settings in config_data.get("profiles", {}).items():
@@ -146,9 +194,9 @@ def load_config() -> Dict[str, SSHProfile]:
             if profile.validate():
                 profiles[name] = profile
         except TypeError as e:
-            error_exit(f"Error in profile '{name}': Unknown setting. {e}")
+            raise ConfigError(f"Error in profile '{name}': Unknown setting. {e}") from e
         except Exception as e:
-            error_exit(f"Error creating profile '{name}': {e}")
+            raise ConfigError(f"Error creating profile '{name}': {e}") from e
 
     return profiles
 
@@ -191,25 +239,33 @@ def display_profile_table(profiles: Dict[str, SSHProfile]) -> None:
 
 
 @contextmanager
-def connection_runner(client_name: str, not_found_msg: str):
+def connection_runner(client_name: str, not_found_msg: str) -> Iterator[None]:
     """Context manager to handle common subprocess connection errors."""
     try:
         yield
     except subprocess.CalledProcessError as e:
-        console.print(
-            f"[bold red]{client_name} connection failed (code {e.returncode})[/bold red]"
+        raise ConnectionErrorWithCode(
+            f"{client_name} connection failed (code {e.returncode})", e.returncode
+        ) from e
+    except KeyboardInterrupt as e:
+        raise ConnectionErrorWithCode("Connection terminated by user", 130) from e
+    except FileNotFoundError as e:
+        raise AasshError(not_found_msg) from e
+
+
+def ensure_mosh_available() -> None:
+    """Ensure mosh binary is present before attempting a mosh connection."""
+    if not check_mosh_installed(show_ok=False, show_instructions=False):
+        raise AasshError(
+            "Mosh profile selected but mosh is not installed. "
+            "Run 'aassh --check-mosh' for installation guidance."
         )
-        sys.exit(e.returncode)
-    except KeyboardInterrupt:
-        console.print("\n[bold yellow]Connection terminated by user[/bold yellow]")
-        sys.exit(130)
-    except FileNotFoundError:
-        error_exit(not_found_msg)
 
 
 def run_connection(profile: SSHProfile) -> None:
     """Execute SSH or Mosh connection"""
     if profile.use_mosh:
+        ensure_mosh_available()
         run_mosh(profile)
     else:
         run_ssh(profile)
@@ -217,11 +273,7 @@ def run_connection(profile: SSHProfile) -> None:
 
 def run_ssh(profile: SSHProfile) -> None:
     """Execute SSH connection"""
-    cmd = ["ssh", "-o", "StrictHostKeyChecking=yes"]
-    if profile.port:
-        cmd.extend(["-p", str(profile.port)])
-    if profile.key:
-        cmd.extend(["-i", os.path.expanduser(profile.key)])
+    cmd = ["ssh", "-o", "StrictHostKeyChecking=yes", *profile.ssh_args()]
     cmd.append(profile.connection_string())
 
     console.print(
@@ -240,11 +292,7 @@ def run_ssh(profile: SSHProfile) -> None:
 def run_mosh(profile: SSHProfile) -> None:
     """Execute Mosh connection"""
     cmd = ["mosh"]
-    ssh_cmd_list = ["ssh"]
-    if profile.port:
-        ssh_cmd_list.extend(["-p", str(profile.port)])
-    if profile.key:
-        ssh_cmd_list.extend(["-i", os.path.expanduser(profile.key)])
+    ssh_cmd_list = ["ssh", *profile.ssh_args()]
 
     # Mosh's --ssh argument is passed to a shell, so it must be a single,
     # properly quoted string to handle paths with spaces in keys.
@@ -344,11 +392,11 @@ def get_profile_input(existing_profile: Optional[SSHProfile] = None) -> Dict[str
 
     name: str = Prompt.ask("Profile Name", default=defaults.get("name", ""))
     if not name:
-        error_exit("Profile name cannot be empty.")
+        raise AasshError("Profile name cannot be empty.")
 
     host: str = Prompt.ask("Host", default=defaults.get("host", ""))
     if not host:
-        error_exit("Host cannot be empty.")
+        raise AasshError("Host cannot be empty.")
 
     user: Optional[str] = (
         Prompt.ask("User (optional)", default=defaults.get("user") or "") or None
@@ -362,7 +410,9 @@ def get_profile_input(existing_profile: Optional[SSHProfile] = None) -> Dict[str
         try:
             port = int(port_str)
         except ValueError:
-            error_exit(f"Invalid port number: '{port_str}'. Port must be an integer.")
+            raise AasshError(
+                f"Invalid port number: '{port_str}'. Port must be an integer."
+            )
 
     key: Optional[str] = (
         Prompt.ask(
@@ -389,7 +439,11 @@ def get_profile_input(existing_profile: Optional[SSHProfile] = None) -> Dict[str
         mosh_args_str: str = Prompt.ask(
             "Mosh args (optional, space-separated)", default=default_mosh_args
         )
-        mosh_args = mosh_args_str.split() if mosh_args_str else []
+        if mosh_args_str:
+            try:
+                mosh_args = shlex.split(mosh_args_str)
+            except ValueError as e:
+                raise AasshError(f"Invalid mosh args: {e}") from e
 
         mosh_port_range = (
             Prompt.ask(
@@ -421,12 +475,12 @@ def add_profile(profiles: Dict[str, SSHProfile]) -> None:
     name: str = input_data["name"]
 
     if name in profiles:
-        error_exit(f"Profile '{name}' already exists.")
+        raise AasshError(f"Profile '{name}' already exists.")
 
     new_profile = SSHProfile(**input_data)
 
     if not new_profile.validate():
-        error_exit("Profile validation failed. Aborting.")
+        raise AasshError("Profile validation failed. Aborting.")
 
     profiles[name] = new_profile
     save_config(profiles)
@@ -436,7 +490,7 @@ def add_profile(profiles: Dict[str, SSHProfile]) -> None:
 def edit_profile(profiles: Dict[str, SSHProfile], name: str) -> None:
     """Interactively edit an existing profile."""
     if name not in profiles:
-        error_exit(f"Profile '{name}' not found.")
+        raise AasshError(f"Profile '{name}' not found.")
 
     console.print(Panel(f"[bold green]Edit Profile: {name}[/bold green]", expand=False))
 
@@ -447,7 +501,7 @@ def edit_profile(profiles: Dict[str, SSHProfile], name: str) -> None:
     updated_profile = SSHProfile(**input_data)
 
     if not updated_profile.validate():
-        error_exit("Profile validation failed. Aborting.")
+        raise AasshError("Profile validation failed. Aborting.")
 
     profiles[name] = updated_profile
     save_config(profiles)
@@ -457,7 +511,7 @@ def edit_profile(profiles: Dict[str, SSHProfile], name: str) -> None:
 def delete_profile(profiles: Dict[str, SSHProfile], name: str) -> None:
     """Delete a profile."""
     if name not in profiles:
-        error_exit(f"Profile '{name}' not found.")
+        raise AasshError(f"Profile '{name}' not found.")
 
     if Confirm.ask(f"Are you sure you want to delete profile '{name}'?", default=False):
         del profiles[name]
@@ -533,30 +587,172 @@ profiles:
             )
         )
     except Exception as e:
-        error_exit(f"Error creating sample config: {e}")
+        raise ConfigError(f"Error creating sample config: {e}") from e
 
 
-def check_mosh_installed() -> bool:
+def check_mosh_installed(
+    show_ok: bool = True, show_instructions: bool = True
+) -> bool:
     """Check if Mosh is installed"""
     try:
         result = subprocess.run(
-            ["mosh", "--version"], capture_output=True, check=True, text=True
+            ["mosh", "--version"], capture_output=True, text=True, check=False
         )
+
+        if result.returncode != 0:
+            if show_instructions:
+                console.print(
+                    "[bold red]✗ Mosh check failed (non-zero exit code)[/bold red]"
+                )
+                console.print("\n[yellow]Installation instructions:[/yellow]")
+                console.print("  Ubuntu/Debian: [cyan]sudo apt install mosh[/cyan]")
+                console.print("  macOS: [cyan]brew install mosh[/cyan]")
+                console.print("  CentOS/RHEL: [cyan]sudo yum install mosh[/cyan]")
+            return False
+
         version_line = (
             result.stdout.split("\n")[0] if result.stdout else "Unknown version"
         )
-        console.print(f"[bold green]✓ Mosh is installed: {version_line}[/bold green]")
+        if show_ok:
+            console.print(
+                f"[bold green]✓ Mosh is installed: {version_line}[/bold green]"
+            )
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        console.print("[bold red]✗ Mosh is not installed or not in PATH[/bold red]")
-        console.print("\n[yellow]Installation instructions:[/yellow]")
-        console.print("  Ubuntu/Debian: [cyan]sudo apt install mosh[/cyan]")
-        console.print("  macOS: [cyan]brew install mosh[/cyan]")
-        console.print("  CentOS/RHEL: [cyan]sudo yum install mosh[/cyan]")
+    except FileNotFoundError:
+        if show_instructions:
+            console.print("[bold red]✗ Mosh is not installed or not in PATH[/bold red]")
+            console.print("\n[yellow]Installation instructions:[/yellow]")
+            console.print("  Ubuntu/Debian: [cyan]sudo apt install mosh[/cyan]")
+            console.print("  macOS: [cyan]brew install mosh[/cyan]")
+            console.print("  CentOS/RHEL: [cyan]sudo yum install mosh[/cyan]")
         return False
 
 
-def main() -> None:
+def export_profiles(profiles: Dict[str, SSHProfile], path_str: str) -> None:
+    """Export current profiles into a YAML file."""
+    output_path = Path(path_str).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    content = {
+        "profiles": {
+            name: profile.to_dict() for name, profile in sorted(profiles.items())
+        }
+    }
+    with open(output_path, "w") as file:
+        yaml.dump(content, file, sort_keys=False, default_flow_style=False, indent=2)
+    console.print(f"[bold green]✓ Profiles exported to {output_path}[/bold green]")
+
+
+def import_profiles(profiles: Dict[str, SSHProfile], path_str: str) -> None:
+    """Import profiles from a YAML file (upsert by name)."""
+    input_path = Path(path_str).expanduser()
+    if not input_path.exists():
+        raise ConfigError(f"Import file not found: {input_path}")
+
+    try:
+        with open(input_path, "r") as file:
+            config_data: Dict[str, Any] = yaml.safe_load(file) or {}
+    except yaml.YAMLError as e:
+        raise ConfigError(f"Error parsing import YAML: {e}") from e
+
+    incoming_profiles: Dict[str, Any] = config_data.get("profiles", {})
+    if not isinstance(incoming_profiles, dict):
+        raise ConfigError("Invalid import format: expected top-level 'profiles' map")
+
+    imported_count = 0
+    for name, settings in incoming_profiles.items():
+        profile = SSHProfile(name=name, **settings)
+        if profile.validate():
+            profiles[name] = profile
+            imported_count += 1
+
+    save_config(profiles)
+    console.print(
+        f"[bold green]✓ Imported {imported_count} profile(s) from {input_path}[/bold green]"
+    )
+
+
+def _is_plain_ssh_host(alias: str) -> bool:
+    return "*" not in alias and "?" not in alias and "!" not in alias
+
+
+def import_from_ssh_config(profiles: Dict[str, SSHProfile], ssh_config_path: str) -> None:
+    """Import host entries from ~/.ssh/config into AASSH profiles."""
+    path = Path(ssh_config_path).expanduser()
+    if not path.exists():
+        raise ConfigError(f"SSH config not found: {path}")
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as e:
+        raise ConfigError(f"Could not read SSH config: {e}") from e
+
+    host_blocks: List[Dict[str, Any]] = []
+    current: Optional[Dict[str, Any]] = None
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        parts = re.split(r"\s+", line, maxsplit=1)
+        if len(parts) != 2:
+            continue
+
+        key, value = parts[0].lower(), parts[1].strip()
+        if key == "host":
+            aliases = value.split()
+            if len(aliases) != 1 or not _is_plain_ssh_host(aliases[0]):
+                current = None
+                continue
+            current = {
+                "name": aliases[0],
+                "host": aliases[0],
+                "user": None,
+                "port": None,
+                "key": None,
+                "description": "Imported from ~/.ssh/config",
+                "tags": ["imported"],
+            }
+            host_blocks.append(current)
+            continue
+
+        if not current:
+            continue
+
+        if key == "hostname":
+            current["host"] = value
+        elif key == "user":
+            current["user"] = value
+        elif key == "port":
+            try:
+                current["port"] = int(value)
+            except ValueError:
+                current["port"] = None
+        elif key == "identityfile":
+            current["key"] = value
+
+    imported_count = 0
+    for block in host_blocks:
+        profile = SSHProfile(
+            name=block["name"],
+            host=block["host"],
+            user=block["user"],
+            port=block["port"],
+            key=block["key"],
+            description=block["description"],
+            tags=block["tags"],
+        )
+        if profile.validate():
+            profiles[profile.name] = profile
+            imported_count += 1
+
+    save_config(profiles)
+    console.print(
+        f"[bold green]✓ Imported {imported_count} profile(s) from {path}[/bold green]"
+    )
+
+
+def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="AASSH - Another Awesome SSH Client with Mosh support",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -572,7 +768,7 @@ def main() -> None:
     group.add_argument("--add", action="store_true", help="Add a new profile.")
     group.add_argument("--edit", metavar="P", help="Edit an existing profile.")
     group.add_argument("--delete", metavar="P", help="Delete a profile.")
-    # Other
+
     parser.add_argument(
         "-f",
         "--filter",
@@ -591,31 +787,72 @@ def main() -> None:
         action="store_true",
         help="Check if Mosh is installed and available.",
     )
+    parser.add_argument(
+        "--export",
+        dest="export_path",
+        metavar="FILE",
+        help="Export all profiles to a YAML file.",
+    )
+    parser.add_argument(
+        "--import",
+        dest="import_path",
+        metavar="FILE",
+        help="Import profiles from a YAML file (upsert by name).",
+    )
+    parser.add_argument(
+        "--import-ssh-config",
+        dest="import_ssh_config",
+        metavar="FILE",
+        nargs="?",
+        const=str(Path.home() / ".ssh" / "config"),
+        help="Import host aliases from OpenSSH config (default: ~/.ssh/config).",
+    )
 
-    args = parser.parse_args()
+    try:
+        import argcomplete  # type: ignore
 
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
+
+    return parser
+
+
+def handle_args(args: argparse.Namespace) -> int:
     if args.version:
         show_version()
-        return
+        return 0
 
     if args.check_mosh:
-        check_mosh_installed()
-        return
+        return 0 if check_mosh_installed() else 1
 
     if args.create_sample_config:
         create_sample_config()
-        return
+        return 0
 
     profiles = load_config()
+
+    if args.import_path:
+        import_profiles(profiles, args.import_path)
+        return 0
+
+    if args.import_ssh_config:
+        import_from_ssh_config(profiles, args.import_ssh_config)
+        return 0
+
+    if args.export_path:
+        export_profiles(profiles, args.export_path)
+        return 0
+
     if args.add:
         add_profile(profiles)
-        return
+        return 0
     if args.edit:
         edit_profile(profiles, args.edit)
-        return
+        return 0
     if args.delete:
         delete_profile(profiles, args.delete)
-        return
+        return 0
 
     if not profiles:
         console.print(
@@ -629,44 +866,45 @@ def main() -> None:
                 border_style="yellow",
             )
         )
-        return
-
-    mosh_profiles = [p for p in profiles.values() if p.use_mosh]
-    if mosh_profiles and not check_mosh_installed():
-        console.print(
-            f"\n[yellow]Warning: {len(mosh_profiles)} profile(s) require Mosh but it's not installed.[/yellow]"
-        )
+        return 0
 
     if args.list:
         profiles_to_display = filter_profiles(profiles, args.filter or "")
         display_profile_table(profiles_to_display)
-        return
+        return 0
 
     if args.interactive:
         interactive_select(profiles, filter_str=args.filter)
-        return
+        return 0
 
     if args.profile:
         if args.profile in profiles:
             run_connection(profiles[args.profile])
         else:
-            console.print(
-                f"[bold red]Error:[/bold red] Profile '{args.profile}' not found!"
-            )
-            console.print("\n[bold]Available profiles:[/bold]")
-            for name in sorted(profiles.keys()):
-                console.print(f"  - {name}")
-            sys.exit(1)
-        return
+            raise AasshExitError(f"Profile '{args.profile}' not found!", code=1)
+        return 0
 
     interactive_select(profiles, filter_str=args.filter)
+    return 0
+
+
+def main() -> int:
+    parser = create_parser()
+    args = parser.parse_args()
+    return handle_args(args)
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Operation cancelled by user[/bold yellow]")
-        sys.exit(0)
+        sys.exit(130)
+    except AasshExitError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        sys.exit(e.code)
+    except AasshError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        sys.exit(1)
     except Exception as e:
         error_exit(f"An unexpected error occurred: {e}")
